@@ -376,14 +376,6 @@ docker compose --profile lab ps
 
 Then open **http://127.0.0.1:8081**.
 
-### 🎬 Three-minute demo script
-
-1. **Sign in as `analyst`.** The strip on every page shows *Source · Local lab sensor* and *Traffic · Demo*.
-2. **Alert queue → View evidence** on a critical alert. The session opens with the triggering events highlighted.
-3. **Save a verdict** with a short note. Refresh to confirm it persisted, then open the **Triaged** tab.
-4. **Sign out, sign in as `admin` → Import dataset.** Upload a Cowrie file, review the preview, click **Import and analyze**.
-5. Open an alert from the dataset, inspect its session and save a verdict. Every page now shows *Source · Imported*.
-
 ---
 
 ## 📥 Datasets for Analysis
@@ -655,20 +647,3 @@ On Windows PowerShell, replace `export NAME=value` with `$env:NAME="value"`.
 ## 🔒 Responsible Use
 
 VoidSentinel is built for **defensive research and education**. Run decoys only on infrastructure you own, keep the dashboard bound to `127.0.0.1`, change all default credentials, and never connect the decoy to a network you care about. Follow your institution's and cloud provider's policies, and respect the license and terms of every dataset you analyze.
-
----
-
-## 👤 Author
-
-**Loganth P** · B.E. Computer Science & Engineering, Vidyavardhaka College of Engineering, Mysuru
-
-[![GitHub](https://img.shields.io/badge/GitHub-LoganthP-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/LoganthP)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Loganth_P-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/loganth-p-158667280/)
-
-<div align="center">
-
-<img src="assets/divider.svg" width="100%" alt=""/>
-
-⭐ If VoidSentinel helped you, consider starring the repo.
-
-</div>
