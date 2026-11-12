@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 150" width="100%" role="img" aria-label="Animated detection layers">
+  <rect width="1200" height="150" rx="16" fill="#0b1020"/>
+  <g font-family="'Segoe UI',Arial,sans-serif" font-size="15" fill="#e2e8f0">
+    <text x="40" y="40" font-weight="700" fill="#7dd3fc">Layer 1 &#xB7; Explainable rules (10)</text>
+    <rect x="40" y="52" width="520" height="14" rx="7" fill="#1e293b"/>
+    <rect x="40" y="52" width="0" height="14" rx="7" fill="#f87171">
+      <animate attributeName="width" values="0;470;470;0" keyTimes="0;0.4;0.9;1" dur="6s" repeatCount="indefinite"/>
+    </rect>
+
+    <text x="640" y="40" font-weight="700" fill="#c4b5fd">Layer 2 &#xB7; Isolation Forest ranking</text>
+    <rect x="640" y="52" width="520" height="14" rx="7" fill="#1e293b"/>
+    <rect x="640" y="52" width="0" height="14" rx="7" fill="#a78bfa">
+      <animate attributeName="width" values="0;0;430;430;0" keyTimes="0;0.2;0.6;0.9;1" dur="6s" repeatCount="indefinite"/>
+    </rect>
+
+    <text x="40" y="110" font-weight="700" fill="#6ee7b7">Layer 3 &#xB7; Analyst verdicts</text>
+    <rect x="40" y="122" width="1120" height="14" rx="7" fill="#1e293b"/>
+    <rect x="40" y="122" width="0" height="14" rx="7" fill="#34d399">
+      <animate attributeName="width" values="0;0;0;1000;1000;0" keyTimes="0;0.3;0.5;0.85;0.95;1" dur="6s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>
