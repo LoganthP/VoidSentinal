@@ -26,12 +26,6 @@
 ![Terraform](https://img.shields.io/badge/Terraform-7B42BC?style=for-the-badge&logo=terraform&logoColor=white)
 ![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
 
-![Cowrie](https://img.shields.io/badge/Decoy-Cowrie-red?style=flat-square)
-![Modes](https://img.shields.io/badge/Modes-Lab%20%7C%20Cloud%20%7C%20Dataset%20Import-8b5cf6?style=flat-square)
-![Dashboard](https://img.shields.io/badge/Dashboard-127.0.0.1%3A8081-22c55e?style=flat-square)
-![Auth](https://img.shields.io/badge/Auth-Admin%20%2F%20Analyst-f59e0b?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)
-
 <br/>
 
 [**Quick Start**](#-quick-start-lab-mode) ·
