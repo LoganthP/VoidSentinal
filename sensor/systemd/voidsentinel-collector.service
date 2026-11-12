@@ -1,0 +1,19 @@
+[Unit]
+Description=VoidSentinel collector (sanitize + ship Cowrie events to CloudWatch)
+After=cowrie.service network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/voidsentinel/collector.env
+ExecStart=/opt/voidsentinel/venv/bin/python /opt/voidsentinel/collector.py
+DynamicUser=yes
+SupplementaryGroups=cowrie
+StateDirectory=voidsentinel
+ProtectSystem=strict
+ProtectHome=read-only
+NoNewPrivileges=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

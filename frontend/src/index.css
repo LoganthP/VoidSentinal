@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+
+html, body, #root { min-height: 100%; }
+
+body {
+  @apply bg-canvas font-sans text-ink antialiased;
+  /* daylight fields behind the glass */
+  background-image:
+    radial-gradient(42rem 30rem at 8% -6%, #BFE3FF 0%, transparent 62%),
+    radial-gradient(36rem 26rem at 96% 4%, #DCD6FF 0%, transparent 60%),
+    radial-gradient(40rem 30rem at 78% 104%, #FFE2CF 0%, transparent 62%),
+    radial-gradient(30rem 24rem at 14% 96%, #D3F3EC 0%, transparent 60%);
+  background-attachment: fixed;
+}
+
+@layer components {
+  .glass {
+    @apply rounded-[22px] border border-white/80 bg-white/60 shadow-glass backdrop-blur-xl;
+  }
+  .glass-strong {
+    @apply rounded-[26px] border border-white/90 bg-white/75 shadow-glass backdrop-blur-2xl;
+  }
+  .lift { @apply transition duration-300 ease-out hover:-translate-y-0.5 hover:shadow-lift; }
+  .h-title { @apply font-display text-[1.65rem] font-semibold leading-tight tracking-[-0.02em] text-ink; }
+  .h-card { @apply font-display text-[0.98rem] font-semibold tracking-[-0.01em] text-ink; }
+  .muted { @apply text-ink-soft; }
+  .faint { @apply text-ink-faint; }
+  .mono { @apply font-mono text-[0.82rem]; }
+  .field {
+    @apply rounded-xl border border-white/90 bg-white/80 px-3 py-2 text-sm text-ink shadow-[inset_0_1px_2px_rgba(40,72,140,.08)]
+           outline-none transition placeholder:text-ink-faint focus:border-signal/50 focus:ring-4 focus:ring-signal/15;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition
+           focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-signal/25 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary { @apply btn bg-signal text-white shadow-[0_10px_24px_-10px_rgba(47,107,255,.8)] hover:bg-[#245BE6]; }
+  .btn-ghost { @apply btn border border-white/90 bg-white/70 text-ink hover:bg-white; }
+  /* neumorphic press used for verdict choices */
+  .soft-btn { @apply btn bg-[#EAF1FA] text-ink-soft shadow-soft active:shadow-pressed; }
+  .soft-btn[data-on="true"] { @apply shadow-pressed text-ink; }
+}
+
+:focus-visible { outline: 3px solid rgba(47,107,255,.35); outline-offset: 2px; }
+
+@keyframes ping-soft { 0% { transform: scale(1); opacity: .55 } 100% { transform: scale(2.4); opacity: 0 } }
+.ping-soft { animation: ping-soft 1.8s cubic-bezier(0,0,.2,1) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

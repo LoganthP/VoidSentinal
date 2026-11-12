@@ -1,0 +1,81 @@
+#!/bin/bash
+# VoidSentinel sensor bootstrap (runs once, on first boot, while bootstrap_mode=true).
+# Log: /var/log/voidsentinel-bootstrap.log
+set -euxo pipefail
+exec > >(tee -a /var/log/voidsentinel-bootstrap.log) 2>&1
+export DEBIAN_FRONTEND=noninteractive
+
+# ---- packages (needs temporary internet egress = bootstrap_mode) ----
+echo "iptables-persistent iptables-persistent/autosave_v4 boolean false" | debconf-set-selections
+echo "iptables-persistent iptables-persistent/autosave_v6 boolean false" | debconf-set-selections
+apt-get update
+apt-get install -y git python3-venv python3-dev libssl-dev libffi-dev build-essential \
+                   iptables iptables-persistent curl
+
+# ---- real sshd off: administration is via SSM Session Manager only ----
+systemctl disable --now ssh.socket 2>/dev/null || true
+systemctl disable --now ssh.service 2>/dev/null || true
+
+# ---- Cowrie ----
+id cowrie >/dev/null 2>&1 || adduser --disabled-password --gecos "" cowrie
+if [ ! -d /home/cowrie/cowrie ]; then
+  sudo -u cowrie git clone https://github.com/cowrie/cowrie /home/cowrie/cowrie
+fi
+cd /home/cowrie/cowrie
+sudo -u cowrie git fetch --tags
+sudo -u cowrie git checkout "${cowrie_ref}"
+sudo -u cowrie python3 -m venv cowrie-env
+sudo -u cowrie cowrie-env/bin/pip install --upgrade pip setuptools wheel
+sudo -u cowrie cowrie-env/bin/pip install -e .
+sudo -u cowrie mkdir -p etc var/log/cowrie var/lib/cowrie/tty var/lib/cowrie/downloads
+cat > etc/cowrie.cfg <<'CFG'
+[honeypot]
+hostname = ${decoy_hostname}
+
+[ssh]
+enabled = true
+listen_endpoints = tcp:2222:interface=0.0.0.0
+
+[telnet]
+enabled = false
+
+[output_jsonlog]
+enabled = true
+CFG
+chown cowrie:cowrie etc/cowrie.cfg
+
+echo "${cowrie_service_b64}" | base64 -d > /etc/systemd/system/cowrie.service
+
+# ---- port 22 -> Cowrie on 2222 ----
+iptables -t nat -C PREROUTING -p tcp --dport 22 -j REDIRECT --to-ports 2222 2>/dev/null \
+  || iptables -t nat -A PREROUTING -p tcp --dport 22 -j REDIRECT --to-ports 2222
+netfilter-persistent save
+
+# ---- VoidSentinel collector ----
+mkdir -p /opt/voidsentinel /etc/voidsentinel
+echo "${collector_b64}" | base64 -d > /opt/voidsentinel/collector.py
+echo "${sanitize_b64}"  | base64 -d > /opt/voidsentinel/sanitize.py
+echo "${validate_b64}"  | base64 -d > /opt/voidsentinel/validate_egress.sh
+chmod 0755 /opt/voidsentinel/validate_egress.sh
+python3 -m venv /opt/voidsentinel/venv
+/opt/voidsentinel/venv/bin/pip install --upgrade pip
+/opt/voidsentinel/venv/bin/pip install "boto3==1.35.20"
+echo "${aws_region}" > /etc/voidsentinel/region
+cat > /etc/voidsentinel/collector.env <<ENV
+SINK=cloudwatch
+AWS_REGION=${aws_region}
+LOG_GROUP=${log_group}
+LOG_STREAM=${sensor_name}
+SENSOR_NAME=${sensor_name}
+COWRIE_LOG=/home/cowrie/cowrie/var/log/cowrie/cowrie.json
+STATE_FILE=/var/lib/voidsentinel/collector_state.json
+HEARTBEAT_SECONDS=60
+ENV
+echo "${collector_service_b64}" | base64 -d > /etc/systemd/system/voidsentinel-collector.service
+
+systemctl daemon-reload
+systemctl enable --now cowrie.service
+systemctl enable --now voidsentinel-collector.service
+
+touch /var/lib/voidsentinel-bootstrap-done
+echo "VoidSentinel sensor bootstrap complete"

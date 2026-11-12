@@ -1,0 +1,81 @@
+# VoidSentinel analysis stack.
+#
+#   Lab (everything local, real Cowrie):  docker compose --profile lab up -d --build
+#   Cloud (read from CloudWatch):         docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build
+#
+# The dashboard is bound to 127.0.0.1:8081 only (change with VS_WEB_PORT in .env). Nothing else is published except the
+# lab decoy on 127.0.0.1:2222.
+name: voidsentinel
+
+services:
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      VS_DATA_DIR: /data
+    volumes:
+      - vs-data:/data
+      - ./datasets:/datasets:ro   # for the command-line importer (very large files)
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "voidsentinel.worker"]
+    env_file: .env
+    environment:
+      VS_DATA_DIR: /data
+      VS_SHIPPED_FILE: /shipped/events.jsonl
+    volumes:
+      - vs-data:/data
+      - shipped:/shipped:ro
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy   # api creates the schema first
+
+  web:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${VS_WEB_PORT:-8081}:80"   # dashboard: http://127.0.0.1:8081
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ---------------- lab profile: a real Cowrie decoy + the same collector used on EC2
+  cowrie:
+    profiles: ["lab"]
+    image: cowrie/cowrie:latest
+    ports:
+      - "127.0.0.1:2222:2222"
+    volumes:
+      - cowrie-var:/cowrie/cowrie-git/var
+    restart: unless-stopped
+
+  collector:
+    profiles: ["lab"]
+    build: ./sensor/collector
+    environment:
+      SINK: file
+      SINK_FILE: /shipped/events.jsonl
+      COWRIE_LOG: /cowrie-var/log/cowrie/cowrie.json
+      SENSOR_NAME: lab-sensor
+      STATE_FILE: /state/collector_state.json
+      HEARTBEAT_SECONDS: "30"
+    volumes:
+      - cowrie-var:/cowrie-var:ro
+      - shipped:/shipped
+      - collector-state:/state
+    restart: unless-stopped
+    depends_on: [cowrie]
+
+volumes:
+  vs-data:
+  shipped:
+  cowrie-var:
+  collector-state:

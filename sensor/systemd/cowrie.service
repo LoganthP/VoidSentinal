@@ -1,0 +1,16 @@
+[Unit]
+Description=Cowrie SSH honeypot (VoidSentinel decoy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=cowrie
+Group=cowrie
+WorkingDirectory=/home/cowrie/cowrie
+Environment=PYTHONPATH=/home/cowrie/cowrie/src
+ExecStart=/home/cowrie/cowrie/cowrie-env/bin/twistd -n --umask=0022 --pidfile= cowrie
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+# Cloud override: the worker reads CloudWatch Logs instead of the local file.
+# Credentials come from (in order): AWS_* variables in .env, the mounted ~/.aws
+# profile (AWS_PROFILE in .env), or the EC2 instance role on the analysis host.
+services:
+  worker:
+    environment:
+      VS_SOURCE: cloudwatch
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
