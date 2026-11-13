@@ -52,6 +52,9 @@ class Settings:
     admin_password: str = os.environ.get("VS_ADMIN_PASSWORD", "")
     analyst_username: str = os.environ.get("VS_ANALYST_USERNAME", "analyst").strip()
     analyst_password: str = os.environ.get("VS_ANALYST_PASSWORD", "")
+    # self-service accounts on the sign-in page
+    signup_enabled: bool = _bool("VS_SIGNUP_ENABLED", True)
+    admin_signup_code: str = os.environ.get("VS_ADMIN_SIGNUP_CODE", "").strip()
     max_upload_mb: int = int(os.environ.get("VS_MAX_UPLOAD_MB", "1024"))
 
     @property

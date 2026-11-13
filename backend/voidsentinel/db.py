@@ -199,6 +199,8 @@ def _migrate(conn) -> None:
         ("alerts", "dataset_id", "INTEGER"),
         ("models", "scope", "TEXT NOT NULL DEFAULT 'live'"),
         ("sessions", "verdict_by", "TEXT"),
+        ("users", "requested_role", "TEXT"),
+        ("users", "created_via", "TEXT"),
     ):
         if col not in _columns(conn, table):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")

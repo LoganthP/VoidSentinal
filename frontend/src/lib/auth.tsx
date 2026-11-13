@@ -1,13 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { api } from "./api";
 
-export interface User { id: number; username: string; role: "analyst" | "admin" }
+export interface User { id: number; username: string; role: "analyst" | "admin"; requested_role?: "admin" | null }
+export type Role = "analyst" | "admin";
 
 interface Ctx {
   user: User | null;
   checking: boolean;
   isAdmin: boolean;
   signIn: (username: string, password: string) => Promise<void>;
+  signUp: (username: string, password: string, role: Role, adminCode?: string) => Promise<User>;
   signOut: () => Promise<void>;
   expired: boolean;
 }
@@ -32,6 +34,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u);
   }, []);
 
+  const signUp = useCallback(async (username: string, password: string, role: Role, adminCode?: string) => {
+    const u = await api<User>("/auth/signup", {
+      method: "POST", body: JSON.stringify({ username, password, role, admin_code: adminCode || null }),
+    });
+    setExpired(false);
+    setUser(u);
+    return u;
+  }, []);
+
   const signOut = useCallback(async () => {
     try { await api("/auth/logout", { method: "POST" }); } catch { /* already signed out */ }
     setExpired(false);
@@ -39,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthCtx.Provider value={{ user, checking, isAdmin: user?.role === "admin", signIn, signOut, expired }}>
+    <AuthCtx.Provider value={{ user, checking, isAdmin: user?.role === "admin", signIn, signUp, signOut, expired }}>
       {children}
     </AuthCtx.Provider>
   );

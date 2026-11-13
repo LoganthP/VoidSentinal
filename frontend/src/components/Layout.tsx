@@ -1,5 +1,5 @@
 import { Bell, BrainCircuit, Database, FileUp, LayoutGrid, LogOut, RadioTower, Rows3, ShieldCheck, UserRound } from "lucide-react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { usePoll } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtTime } from "../lib/format";
@@ -72,7 +72,10 @@ function ProvenanceStrip({ p }: { p: Provenance | null }) {
 }
 
 export default function Layout() {
-  const { user, isAdmin, signOut } = useAuth();
+  const { user, isAdmin, signOut: endSession } = useAuth();
+  const navigate = useNavigate();
+  // explicit sign-out returns to the landing page; an expired session instead asks to sign in and come back
+  const signOut = async () => { navigate("/", { replace: true }); await endSession(); };
   const { withScope, scope } = useScope();
   const { data: health } = usePoll<{ sensors: { state: string }[]; worker_state: string }>("/sensors", 15000);
   const { data: prov } = usePoll<Provenance>(withScope("/provenance"), 30000);
@@ -138,6 +141,11 @@ export default function Layout() {
           <button onClick={signOut} className="flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-soft"><LogOut className="h-4 w-4" />Sign out</button>
         </nav>
         <div className="glass mb-3 p-2.5 lg:hidden"><SourcePicker compact liveLabel={liveLabel} /></div>
+        {user?.requested_role === "admin" && (
+          <div role="status" className="mb-3 rounded-[20px] border border-sev-medium/25 bg-[#FFF6E0]/90 px-4 py-2 text-sm">
+            <b className="font-semibold">Admin access requested.</b> You have analyst access until an existing admin approves it on the Access page. You'll be signed out once it's approved; sign in again to continue as an admin.
+          </div>
+        )}
         <ProvenanceStrip p={prov} />
         <main><Outlet /></main>
         <footer className="mt-8 pb-2 text-xs text-ink-faint">

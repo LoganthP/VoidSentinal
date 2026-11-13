@@ -109,6 +109,25 @@ def auth_login(body: LoginIn, request: Request, response: Response):
     return auth.login(request, response, body.username.strip(), body.password)
 
 
+class SignupIn(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    password: str = Field(min_length=10, max_length=256)
+    role: Literal["analyst", "admin"] = "analyst"
+    admin_code: Optional[str] = Field(default=None, max_length=200)
+
+
+@app.get("/api/auth/options")
+def auth_options():
+    return auth.signup_options()
+
+
+@app.post("/api/auth/signup")
+def auth_signup(body: SignupIn, request: Request, response: Response):
+    if request.headers.get("x-vs-request") != "1":
+        raise HTTPException(403, "Missing X-VS-Request header")
+    return auth.signup(request, response, body.username.strip(), body.password, body.role, body.admin_code)
+
+
 @app.post("/api/auth/logout")
 def auth_logout(request: Request, response: Response):
     auth.logout(request, response)
@@ -598,12 +617,13 @@ class UserPatch(BaseModel):
     role: Optional[Literal["analyst", "admin"]] = None
     active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=10, max_length=256)
+    decline_request: Optional[bool] = None
 
 
 @api.get("/users")
 def list_users(_: dict = Depends(auth.require_admin)):
     return {"items": [dict(r) for r in _conn().execute(
-        "SELECT id, username, role, active, created_at, last_login, "
+        "SELECT id, username, role, active, created_at, last_login, requested_role, created_via, "
         "(SELECT COUNT(*) FROM auth_sessions s WHERE s.user_id = users.id AND s.expires_at > ?) sessions "
         "FROM users ORDER BY username", (time.time(),))]}
 
@@ -626,7 +646,9 @@ def update_user(user_id: int, body: UserPatch, me: dict = Depends(auth.require_a
         if not conn.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
             raise HTTPException(404, "User not found")
         if body.role:
-            conn.execute("UPDATE users SET role=? WHERE id=?", (body.role, user_id))
+            conn.execute("UPDATE users SET role=?, requested_role=NULL WHERE id=?", (body.role, user_id))
+        if body.decline_request:
+            conn.execute("UPDATE users SET requested_role=NULL WHERE id=?", (user_id,))
         if body.active is not None:
             conn.execute("UPDATE users SET active=? WHERE id=?", (1 if body.active else 0, user_id))
         if body.password:

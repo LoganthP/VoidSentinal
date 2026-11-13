@@ -5,7 +5,7 @@ import { api, usePoll } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtTime } from "../lib/format";
 
-interface U { id: number; username: string; role: "analyst" | "admin"; active: number; created_at: number; last_login: number | null; sessions: number }
+interface U { id: number; username: string; role: "analyst" | "admin"; active: number; created_at: number; last_login: number | null; sessions: number; requested_role: "admin" | null; created_via: string | null }
 
 export default function Access() {
   const { user, isAdmin } = useAuth();
@@ -14,6 +14,7 @@ export default function Access() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  const pending = data?.items.filter((u) => u.requested_role === "admin" && u.active) ?? [];
   if (!isAdmin) return <><PageHeader title="Access" /><ErrorBanner message="Only admins can manage access." /></>;
 
   async function run(fn: () => Promise<unknown>, ok: string) {
@@ -26,6 +27,19 @@ export default function Access() {
       <PageHeader title="Access" subtitle="Analysts can view telemetry, investigate alerts and record verdicts. Admins can also import datasets, retrain models and manage access. Changing a role, password or status signs that person out immediately." />
       {(error || err) && <div className="mb-4"><ErrorBanner message={(error || err)!} /></div>}
       {msg && <p className="mb-4 text-sm font-medium text-sev-low">{msg}</p>}
+      {pending.length > 0 && (
+        <Card title={`Admin requests (${pending.length})`} className="mb-4 ring-2 ring-sev-medium/25">
+          <ul className="flex flex-col gap-2">
+            {pending.map((u) => (
+              <li key={u.id} className="flex flex-wrap items-center gap-3 rounded-2xl bg-white/70 p-3 text-sm">
+                <span className="min-w-0 flex-1"><b className="font-semibold">{u.username}</b> created an account on {fmtTime(u.created_at)} and asked for admin access. They currently have analyst access.</span>
+                <button className="btn-primary py-1.5" onClick={() => run(() => api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ role: "admin" }) }), `${u.username} is now an admin`)}>Approve</button>
+                <button className="btn-ghost py-1.5" onClick={() => run(() => api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ decline_request: true }) }), `Declined ${u.username}'s request; they stay an analyst`)}>Decline</button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 xl:col-span-8">
           <Card title="People">
@@ -35,7 +49,10 @@ export default function Access() {
                 <tbody>
                   {data?.items.map((u) => (
                     <tr key={u.id} className="border-t border-ink/5">
-                      <td className="py-2.5 font-medium">{u.username}{u.id === user?.id && <span className="ml-2 text-xs text-ink-faint">(you)</span>}</td>
+                      <td className="py-2.5 font-medium">{u.username}{u.id === user?.id && <span className="ml-2 text-xs text-ink-faint">(you)</span>}
+                        {u.created_via === "signup" && <span className="ml-2 rounded-md bg-signal-soft px-1.5 text-[0.68rem] font-semibold text-signal">self sign-up</span>}
+                        {u.requested_role === "admin" && <span className="ml-2 rounded-md bg-[#FFF6E0] px-1.5 text-[0.68rem] font-semibold text-sev-medium">admin requested</span>}
+                      </td>
                       <td>
                         <select className="field py-1 text-sm" value={u.role} disabled={u.id === user?.id}
                                 onChange={(e) => run(() => api(`/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ role: e.target.value }) }), `${u.username} is now ${e.target.value}`)}>

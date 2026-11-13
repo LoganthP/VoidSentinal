@@ -127,6 +127,11 @@ def login(request: Request, response: Response, username: str, password: str) ->
         raise HTTPException(401, "Incorrect username or password")
     with _fail_lock:
         _failures.pop(key, None)
+    return _start_session(request, response, row)
+
+
+def _start_session(request: Request, response: Response, row) -> dict:
+    conn = db.get_conn()
     token = secrets.token_urlsafe(32)
     now = time.time()
     conn.execute("INSERT INTO auth_sessions(token_hash, user_id, created_at, expires_at, last_seen) VALUES (?,?,?,?,?)",
@@ -137,6 +142,60 @@ def login(request: Request, response: Response, username: str, password: str) ->
     response.set_cookie(COOKIE, token, httponly=True, secure=_cookie_secure(request), samesite="strict",
                         max_age=int(settings.session_hours * 3600), path="/")
     return _user_out(row)
+
+
+# ---- self-service accounts
+_signups: dict[str, deque] = defaultdict(deque)
+MAX_SIGNUPS, SIGNUP_WINDOW = 5, 3600
+
+
+def signup_options() -> dict:
+    return {"signup_enabled": settings.signup_enabled,
+            "admin_code_configured": bool(settings.admin_signup_code)}
+
+
+def signup(request: Request, response: Response, username: str, password: str, role: str,
+           admin_code: str | None) -> dict:
+    """Analysts are created active. Admins need the invite code from .env; without it the person
+    gets analyst access and an admin request that an existing admin approves on the Access page."""
+    if not settings.signup_enabled:
+        raise HTTPException(403, "Creating accounts here is turned off. Ask an admin to add you.")
+    ip = _client_ip(request)
+    now = time.time()
+    with _fail_lock:
+        q = _signups[ip]
+        while q and now - q[0] > SIGNUP_WINDOW:
+            q.popleft()
+        if len(q) >= MAX_SIGNUPS:
+            raise HTTPException(429, "Too many new accounts from this address. Try again later.")
+    validate_new_password(password)
+    if password.lower() == username.lower():
+        raise HTTPException(400, "The password can't be the same as the username")
+    final_role, requested = "analyst", None
+    if role == "admin":
+        code = (admin_code or "").strip()
+        if code:
+            key = (ip, "admin-code")
+            _check_locked(key)
+            if not settings.admin_signup_code or not hmac.compare_digest(code, settings.admin_signup_code):
+                _record_fail(key)
+                raise HTTPException(403, "That admin invite code is not valid. Leave it empty to request "
+                                         "admin access instead.")
+            final_role = "admin"
+        else:
+            requested = "admin"
+    conn = db.get_conn()
+    if conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+        raise HTTPException(409, "That username is taken. Sign in instead, or choose another name.")
+    conn.execute("INSERT INTO users(username, pw_hash, role, created_at, requested_role, created_via) "
+                 "VALUES (?,?,?,?,?,'signup')", (username, hash_password(password), final_role, now, requested))
+    conn.commit()
+    with _fail_lock:
+        _signups[ip].append(now)
+    row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    log.info("self-service account '%s' created as %s%s", username, final_role,
+             " (admin access requested)" if requested else "")
+    return _start_session(request, response, row)
 
 
 def logout(request: Request, response: Response) -> None:
@@ -153,7 +212,9 @@ def _h(token: str) -> str:
 
 
 def _user_out(row) -> dict:
-    return {"id": row["id"], "username": row["username"], "role": row["role"]}
+    keys = row.keys()
+    return {"id": row["id"], "username": row["username"], "role": row["role"],
+            "requested_role": row["requested_role"] if "requested_role" in keys else None}
 
 
 def current_user(request: Request) -> dict:
