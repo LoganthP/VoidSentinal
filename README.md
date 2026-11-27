@@ -1,7 +1,5 @@
 <div align="center">
 
-<p><a href="VERCEL.md">Vercel deployment: setup, persistent imports and verification</a></p>
-
 <img src="assets/banner.svg" alt="VoidSentinel" width="100%"/>
 
 <br/>
@@ -27,6 +25,8 @@
 ![AWS](https://img.shields.io/badge/AWS-232F3E?style=for-the-badge&logo=amazonwebservices&logoColor=white)
 ![Terraform](https://img.shields.io/badge/Terraform-7B42BC?style=for-the-badge&logo=terraform&logoColor=white)
 ![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
+
+<p><a href="VERCEL.md">Vercel deployment: setup, persistent imports and verification</a></p>
 
 <br/>
 
