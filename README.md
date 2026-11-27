@@ -1,5 +1,7 @@
 <div align="center">
 
+<p><a href="VERCEL.md">Vercel deployment: setup, persistent imports and verification</a></p>
+
 <img src="assets/banner.svg" alt="VoidSentinel" width="100%"/>
 
 <br/>

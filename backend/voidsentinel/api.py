@@ -11,7 +11,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from . import __version__, auth, db, evaluation, importer, ml
+from . import __version__, auth, db, evaluation, importer, ml, serverless_import
 from .categories import CATEGORY_LABELS
 from .config import settings
 from .sessions import close_duration, iso
@@ -23,8 +23,9 @@ from contextlib import asynccontextmanager
 async def _lifespan(_app):
     db.init()
     auth.seed_users()
-    importer.mark_interrupted()
-    importer.cleanup_uploads()
+    if not os.environ.get("VERCEL"):
+        importer.mark_interrupted()
+        importer.cleanup_uploads()
     yield
 
 
@@ -685,6 +686,9 @@ async def upload_dataset(request: Request, filename: str = Query(..., min_length
     """Raw file body (no multipart). Streams it to disk, then validates it in a background process."""
     import shutil
 
+    if os.environ.get("VERCEL"):
+        raise HTTPException(409, "Reload the import page to use chunked uploads on Vercel.")
+
     token, path = importer.new_upload(filename)
     folder = os.path.dirname(path)
     limit = settings.max_upload_mb * 1024 * 1024
@@ -708,6 +712,8 @@ async def upload_dataset(request: Request, filename: str = Query(..., min_length
 
 @api.get("/datasets/uploads/{token}")
 def upload_status(token: str, _: dict = Depends(auth.require_admin)):
+    if db.get_conn().execute("SELECT 1 FROM import_jobs WHERE token=?", (token,)).fetchone():
+        return serverless_import.status(token)
     try:
         st = importer.read_status(token)
     except (ValueError, FileNotFoundError) as exc:
@@ -726,6 +732,9 @@ class RecheckIn(BaseModel):
 @api.post("/datasets/recheck")
 def recheck_dataset(body: RecheckIn, _: dict = Depends(auth.require_admin)):
     """CSV: validate again with an analyst-chosen column mapping (background)."""
+    if db.get_conn().execute("SELECT 1 FROM import_jobs WHERE token=?", (body.token,)).fetchone():
+        serverless_import.recheck(body.token, {k: v for k, v in body.mapping.items() if k in importer.MAPPABLE and v})
+        return {"token": body.token}
     try:
         importer.upload_path(body.token)
     except (ValueError, FileNotFoundError) as exc:
@@ -741,6 +750,8 @@ class ImportIn(BaseModel):
 
 @api.post("/datasets/import")
 def start_import(body: ImportIn, _: dict = Depends(auth.require_admin)):
+    if db.get_conn().execute("SELECT 1 FROM import_jobs WHERE token=?", (body.token,)).fetchone():
+        return serverless_import.queue_import(body.token, body.name.strip() or "Imported dataset")
     try:
         path = importer.upload_path(body.token)
         st = importer.read_status(body.token)
@@ -771,3 +782,4 @@ def remove_dataset(dataset_id: int, _: dict = Depends(auth.require_admin)):
 
 
 app.include_router(api)
+app.include_router(serverless_import.router)

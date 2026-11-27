@@ -60,6 +60,19 @@ def validate_new_password(pw: str) -> None:
 def seed_users() -> None:
     """Create the two starting accounts the first time the API runs."""
     conn = db.get_conn()
+    if settings.admin_password_reset_version and settings.admin_password:
+        # Explicit, one-time recovery via hosting environment. Changing a password
+        # later in Access must never be undone by a subsequent cold start.
+        key = "admin_password_reset:" + _h(settings.admin_password_reset_version)
+        with db.tx():
+            conn.execute("BEGIN IMMEDIATE")
+            if not db.get_checkpoint(key):
+                row = conn.execute("SELECT id FROM users WHERE username=?", (settings.admin_username,)).fetchone()
+                if row:
+                    conn.execute("UPDATE users SET pw_hash=?,role='admin',active=1,requested_role=NULL WHERE id=?",
+                                 (hash_password(settings.admin_password), row["id"]))
+                    conn.execute("DELETE FROM auth_sessions WHERE user_id=?", (row["id"],))
+                    db.set_checkpoint(conn, key, True)
     if conn.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]:
         return
     created = []
@@ -74,6 +87,8 @@ def seed_users() -> None:
         ).fetchone()
         if row is not None:
             created.append((username, role, pw if generated else None))
+    if settings.admin_password_reset_version and settings.admin_password:
+        db.set_checkpoint(conn, "admin_password_reset:" + _h(settings.admin_password_reset_version), True)
     conn.commit()
     for username, role, generated in created:
         if generated:

@@ -2,7 +2,7 @@ import { CheckCircle2, FileJson, Info, ShieldCheck, Trash2, UploadCloud, XCircle
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, ErrorBanner, PageHeader } from "../components/ui";
-import { api, API_HEADERS } from "../lib/api";
+import { api, ApiError, API_HEADERS } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtTime } from "../lib/format";
 import { useScope, type Dataset } from "../lib/scope";
@@ -31,7 +31,16 @@ const FIELD_LABEL: Record<string, string> = {
 
 async function waitValidation(token: string, onTick: (st: UploadStatus) => void): Promise<{ token: string; report: Report }> {
   for (;;) {
-    const st = await api<UploadStatus>(`/datasets/uploads/${token}`);
+    let st: UploadStatus;
+    try {
+      st = await api<UploadStatus>(`/datasets/uploads/${token}/process`, { method: "POST" });
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) {
+        await new Promise((r) => window.setTimeout(r, 3000));
+        continue;
+      }
+      throw e;
+    }
     onTick(st);
     if (st.state === "ready" && st.report) return { token, report: st.report };
     if (st.state === "failed") throw new Error(st.error || "Validation failed");
@@ -39,23 +48,43 @@ async function waitValidation(token: string, onTick: (st: UploadStatus) => void)
   }
 }
 
-function upload(file: File, onProgress: (p: number) => void): Promise<{ token: string }> {
+async function upload(file: File, onProgress: (p: number) => void): Promise<{ token: string }> {
+  const job = await api<{ token: string; chunk_bytes: number }>("/datasets/uploads", {
+    method: "POST", body: JSON.stringify({ filename: file.name, size: file.size }),
+  });
+  for (let offset = 0, part = 0; offset < file.size; offset += job.chunk_bytes, part++) {
+    const chunk = file.slice(offset, offset + job.chunk_bytes);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await uploadChunk(job.token, part, chunk, (p) => onProgress((offset + p * chunk.size) / file.size));
+        break;
+      } catch (e) {
+        if (attempt >= 2) throw e;
+        await new Promise((resolve) => window.setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    }
+  }
+  await api(`/datasets/uploads/${job.token}/complete`, { method: "POST" });
+  return { token: job.token };
+}
+
+function uploadChunk(token: string, part: number, chunk: Blob, onProgress: (p: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `/api/datasets/upload?filename=${encodeURIComponent(file.name)}`);
+    xhr.open("PUT", `/api/datasets/uploads/${token}/chunks/${part}`);
     Object.entries(API_HEADERS).forEach(([k, v]) => xhr.setRequestHeader(k, v));
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {
       let body: any = null;
       try { body = JSON.parse(xhr.responseText); } catch { /* not json */ }
-      if (xhr.status >= 200 && xhr.status < 300 && body) return resolve(body);
+      if (xhr.status >= 200 && xhr.status < 300 && body) return resolve();
       if (xhr.status === 401) window.dispatchEvent(new Event("vs-signed-out"));
       if (xhr.status === 413 && !body) return reject(new Error("The file is larger than the web server allows. Use the command-line importer."));
       reject(new Error(body?.detail || `Upload failed (${xhr.status})`));
     };
     xhr.onerror = () => reject(new Error("Upload failed: the API is unreachable."));
-    xhr.send(file);
+    xhr.send(chunk);
   });
 }
 
@@ -86,7 +115,7 @@ export default function ImportDataset() {
   const { isAdmin } = useAuth();
   const { datasets, reloadDatasets, setScope } = useScope();
   const input = useRef<HTMLInputElement>(null);
-  const [phase, setPhase] = useState<Phase>("idle");
+  const [phase, setPhase] = useState<Phase>(() => sessionStorage.getItem("vs-import-dataset") ? "analyzing" : "idle");
   const [pct, setPct] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -96,7 +125,10 @@ export default function ImportDataset() {
   const [rechecking, setRechecking] = useState(false);
   const [val, setVal] = useState<{ progress: number; rows: number }>({ progress: 0, rows: 0 });
   const [name, setName] = useState("");
-  const [dsId, setDsId] = useState<number | null>(null);
+  const [dsId, setDsId] = useState<number | null>(() => {
+    const saved = Number(sessionStorage.getItem("vs-import-dataset"));
+    return saved > 0 ? saved : null;
+  });
   const [drag, setDrag] = useState(false);
   const running = datasets.find((d) => d.id === dsId) ?? null;
 
@@ -131,20 +163,28 @@ export default function ImportDataset() {
     try {
       const r = await api<{ id: number }>("/datasets/import", { method: "POST", body: JSON.stringify({ token: tok, name: name.trim() || file?.name }) });
       setDsId(r.id); setPhase("analyzing"); reloadDatasets();
+      sessionStorage.setItem("vs-import-dataset", String(r.id));
     } catch (e) { setErr((e as Error).message); }
   }
 
   useEffect(() => {
     if (phase !== "analyzing" || dsId == null) return;
-    const id = window.setInterval(async () => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const advance = async () => {
       try {
+        await api(`/datasets/${dsId}/process`, { method: "POST" });
         const d = await api<Dataset>(`/datasets/${dsId}`);
+        if (cancelled) return;
         reloadDatasets();
-        if (d.status === "ready") setPhase("done");
-        if (d.status === "failed") { setErr(d.error || "Import failed"); setPhase("idle"); }
-      } catch { /* keep polling */ }
-    }, 1000);
-    return () => window.clearInterval(id);
+        setErr(null);
+        if (d.status === "ready") { sessionStorage.removeItem("vs-import-dataset"); setPhase("done"); return; }
+        if (d.status === "failed") { sessionStorage.removeItem("vs-import-dataset"); setErr(d.error || "Import failed"); setPhase("idle"); return; }
+      } catch (e) { if (!cancelled) setErr(`${(e as Error).message} Retrying; saved progress is retained.`); }
+      if (!cancelled) timer = window.setTimeout(advance, 1000);
+    };
+    advance();
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [phase, dsId, reloadDatasets]);
 
   function open(id: number, path: string) { setScope(`ds:${id}`); navigate(path); }
@@ -356,7 +396,11 @@ export default function ImportDataset() {
                         </div>
                       </>
                     )}
-                    {d.status === "importing" && <div className="mt-1 text-xs text-signal">{d.stage} · {(d.progress * 100).toFixed(0)}%</div>}
+                    {d.status === "importing" && <div className="mt-1 text-xs text-signal">{d.stage} · {(d.progress * 100).toFixed(0)}%
+                      {isAdmin && dsId !== d.id && <button className="ml-2 font-semibold" onClick={() => {
+                        sessionStorage.setItem("vs-import-dataset", String(d.id)); setDsId(d.id); setPhase("analyzing");
+                      }}>Resume analysis</button>}
+                    </div>}
                     {d.status === "failed" && <div className="mt-1 flex items-start gap-1 text-xs text-sev-critical"><XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{d.error}</div>}
                   </li>
                 ))}

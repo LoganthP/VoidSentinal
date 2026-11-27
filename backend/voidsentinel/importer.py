@@ -40,6 +40,7 @@ import time
 import uuid
 import zipfile
 from collections import Counter
+from contextlib import closing
 from datetime import datetime, timezone
 from typing import Callable, Iterator
 
@@ -825,21 +826,22 @@ def _import(conn, ds_id: int, staged_path: str) -> None:
     # cross-connection rule: one ordered pass over failed logins
     _progress(conn, ds_id, "Checking repeated login failures per source", 0.82,
               events=inserted, duplicate_rows=n - inserted, first_ts=first, last_ts=last)
-    cur = db.connect().execute(
-        "SELECT src_ip, event_uid, ts, sensor, session FROM events WHERE dataset_id=? "
-        "AND eventid='cowrie.login.failed' AND src_ip IS NOT NULL ORDER BY src_ip, ts", (ds_id,))
-    ip, rows_ip = None, []
-    for r in cur:
-        if r["src_ip"] != ip:
-            if rows_ip:
-                rules.emit_source_bursts(conn, ip, rows_ip, ds_id)
-            ip, rows_ip = r["src_ip"], []
-            if time.time() - last_commit > 1.0:
-                conn.commit()
-                last_commit = time.time()
-        rows_ip.append(r)
-    if rows_ip:
-        rules.emit_source_bursts(conn, ip, rows_ip, ds_id)
+    with closing(db.connect()) as source_conn:
+        cur = source_conn.execute(
+            "SELECT src_ip, event_uid, ts, sensor, session FROM events WHERE dataset_id=? "
+            "AND eventid='cowrie.login.failed' AND src_ip IS NOT NULL ORDER BY src_ip, ts", (ds_id,))
+        ip, rows_ip = None, []
+        for r in cur:
+            if r["src_ip"] != ip:
+                if rows_ip:
+                    rules.emit_source_bursts(conn, ip, rows_ip, ds_id)
+                ip, rows_ip = r["src_ip"], []
+                if time.time() - last_commit > 1.0:
+                    conn.commit()
+                    last_commit = time.time()
+            rows_ip.append(r)
+        if rows_ip:
+            rules.emit_source_bursts(conn, ip, rows_ip, ds_id)
     conn.commit()
 
     phase("cross-connection rule")
@@ -867,6 +869,9 @@ def delete_dataset(ds_id: int) -> None:
     conn.execute("DELETE FROM alert_sessions WHERE alert_id IN (SELECT id FROM alerts WHERE dataset_id=?)", (ds_id,))
     for table in ("alerts", "sessions", "events"):
         conn.execute(f"DELETE FROM {table} WHERE dataset_id=?", (ds_id,))
+    conn.execute("DELETE FROM model_files WHERE version IN (SELECT version FROM models WHERE scope=?)", (f"ds:{ds_id}",))
+    conn.execute("DELETE FROM import_parts WHERE token IN (SELECT token FROM import_jobs WHERE dataset_id=?)", (ds_id,))
+    conn.execute("DELETE FROM import_jobs WHERE dataset_id=?", (ds_id,))
     conn.execute("DELETE FROM models WHERE scope=?", (f"ds:{ds_id}",))
     conn.execute("DELETE FROM datasets WHERE id=?", (ds_id,))
     conn.commit()
@@ -881,7 +886,8 @@ def delete_dataset(ds_id: int) -> None:
 def mark_interrupted() -> None:
     """At API start: imports whose process is gone cannot resume."""
     conn = db.get_conn()
-    for r in conn.execute("SELECT id, pid FROM datasets WHERE status='importing'").fetchall():
+    for r in conn.execute("SELECT id, pid FROM datasets WHERE status='importing' AND id NOT IN "
+                          "(SELECT dataset_id FROM import_jobs WHERE dataset_id IS NOT NULL)").fetchall():
         if not _alive(r["pid"]):
             conn.execute("UPDATE datasets SET status='failed', error='The import stopped before finishing "
                          "(the service restarted). Delete this dataset and import the file again.' WHERE id=?",

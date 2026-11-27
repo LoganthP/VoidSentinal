@@ -23,7 +23,7 @@ def _cidrs(raw: str) -> list:
 class Settings:
     database_url: str = os.environ.get("TURSO_DATABASE_URL", "")
     database_token: str = os.environ.get("TURSO_AUTH_TOKEN", "")
-    data_dir: str = os.environ.get("VS_DATA_DIR", "/tmp/voidsentinel" if os.environ.get("VERCEL") and database_url else "/data")
+    data_dir: str = os.environ.get("VS_DATA_DIR", "/tmp/voidsentinel" if os.environ.get("VERCEL") else "/data")
     source: str = os.environ.get("VS_SOURCE", "file").lower()          # file | cloudwatch
     shipped_file: str = os.environ.get("VS_SHIPPED_FILE", "/shipped/events.jsonl")
     aws_region: str = os.environ.get("AWS_REGION", "ap-south-1")
@@ -52,6 +52,7 @@ class Settings:
     cookie_secure: str = os.environ.get("VS_COOKIE_SECURE", "auto").lower()      # auto | true | false
     admin_username: str = os.environ.get("VS_ADMIN_USERNAME", "admin").strip()
     admin_password: str = os.environ.get("VS_ADMIN_PASSWORD", "")
+    admin_password_reset_version: str = os.environ.get("VS_ADMIN_PASSWORD_RESET_VERSION", "").strip()
     analyst_username: str = os.environ.get("VS_ANALYST_USERNAME", "analyst").strip()
     analyst_password: str = os.environ.get("VS_ANALYST_PASSWORD", "")
     # self-service accounts on the sign-in page

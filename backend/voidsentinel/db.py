@@ -6,6 +6,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 from .config import settings
 
@@ -164,6 +165,25 @@ CREATE TABLE IF NOT EXISTS models (
 """
 
 _local = threading.local()
+_isolated = ContextVar("isolated_database", default=None)
+
+
+@contextmanager
+def isolated_database(path):
+    """Request-local scratch database for bulk analysis, never shared across requests."""
+    conn = sqlite3.connect(path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    token = _isolated.set((path, conn))
+    try:
+        conn.executescript(SCHEMA)
+        _migrate(conn)
+        conn.commit()
+        yield conn
+    finally:
+        _isolated.reset(token)
+        conn.close()
 
 
 class RemoteRow(dict):
@@ -227,6 +247,10 @@ class RemoteConnection:
 
 
 def connect() -> sqlite3.Connection | RemoteConnection:
+    if _isolated.get():
+        conn = sqlite3.connect(_isolated.get()[0], timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
     if settings.database_url:
         import libsql
 
@@ -242,6 +266,8 @@ def connect() -> sqlite3.Connection | RemoteConnection:
 
 
 def get_conn() -> sqlite3.Connection | RemoteConnection:
+    if _isolated.get():
+        return _isolated.get()[1]
     conn = getattr(_local, "conn", None)
     if conn is None:
         conn = connect()
@@ -298,21 +324,30 @@ def _migrate(conn) -> None:
 
 
 def init() -> None:
+    if _isolated.get():
+        return
+    if os.environ.get("VERCEL") and not settings.database_url:
+        raise RuntimeError("Vercel needs persistent storage. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in the project environment.")
     conn = get_conn()
     if not settings.database_url:
         conn.executescript(SCHEMA)
         _migrate(conn)
         conn.commit()
+        from .serverless_import import init_schema
+        init_schema(conn)
         return
 
     with tx() as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("CREATE TABLE IF NOT EXISTS checkpoints (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        if conn.execute("SELECT 1 FROM checkpoints WHERE name='schema_version_1'").fetchone():
-            return
-        conn.executescript(SCHEMA)
-        _migrate(conn)
-        set_checkpoint(conn, "schema_version_1", True)
+        if not conn.execute("SELECT 1 FROM checkpoints WHERE name='schema_version_1'").fetchone():
+            conn.executescript(SCHEMA)
+            _migrate(conn)
+            set_checkpoint(conn, "schema_version_1", True)
+        if not conn.execute("SELECT 1 FROM checkpoints WHERE name='serverless_import_v1'").fetchone():
+            from .serverless_import import init_schema
+            init_schema(conn, commit=False)
+            set_checkpoint(conn, "serverless_import_v1", True)
 
 
 def scope_sql(scope: str | None, col: str = "dataset_id") -> tuple[str, list]:

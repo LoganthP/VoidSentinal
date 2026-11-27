@@ -12,12 +12,14 @@ import math
 import os
 import sqlite3
 import time
+import io
 
 import joblib
 import numpy as np
 from sklearn.ensemble import IsolationForest
 
 from .config import settings
+from . import db
 
 log = logging.getLogger("vs.ml")
 
@@ -158,7 +160,10 @@ def active_model(conn, scope: str = "live") -> tuple[str | None, dict | None]:
         try:
             _cache[scope] = (row["version"], joblib.load(row["path"]))
         except FileNotFoundError:
-            return None, None
+            stored = conn.execute("SELECT data FROM model_files WHERE version=?", (row["version"],)).fetchone()
+            if not stored:
+                return None, None
+            _cache[scope] = (row["version"], joblib.load(io.BytesIO(bytes(stored[0]))))
     return _cache[scope]
 
 
@@ -175,6 +180,10 @@ def train_and_activate(conn, scope: str = "live", commit_chunks: bool = False) -
     os.makedirs(settings.model_dir, exist_ok=True)
     path = os.path.join(settings.model_dir, f"{version}.joblib")
     joblib.dump(bundle, path)
+    # Models must survive cold starts just like their scores and metadata.
+    if not db._isolated.get():
+        with open(path, "rb") as model_file:
+            conn.execute("INSERT OR REPLACE INTO model_files(version,data) VALUES(?,?)", (version, model_file.read()))
     stats = {"feature_names": FEATURE_NAMES, "raw_median": bundle["raw_median"],
              "include_demo": settings.ml_include_demo if scope == "live" else False}
     conn.execute("UPDATE models SET active=0 WHERE scope=?", (scope,))
