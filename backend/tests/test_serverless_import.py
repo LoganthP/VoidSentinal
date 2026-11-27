@@ -58,7 +58,7 @@ def test_durable_zip_analysis_resume_and_model_cold_start(monkeypatch):
         patch.setattr(si.time, "monotonic", lambda: next(ticks, 100))
         # Call the worker directly to avoid changing the HTTP client's clock.
         si._publish(si._job(token), conn)
-    assert si._job(token)["cursor"] == 1
+    assert 0 < si._job(token)["cursor"] < si._job(token)["batch_count"]
     assert c.post(f"/api/datasets/{ds}/process", headers=H).json()["state"] == "done"
     d = c.get(f"/api/datasets/{ds}").json()
     assert d["status"] == "ready" and d["events"] == 280 and d["sessions"] == 35

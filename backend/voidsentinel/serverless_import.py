@@ -304,17 +304,21 @@ def _publish(job, conn):
     deadline = time.monotonic() + 15
     token, ds_id, cursor = job["token"], job["dataset_id"], job["cursor"]
     while cursor < job["batch_count"] and time.monotonic() < deadline:
-        row = conn.execute("SELECT data FROM import_parts WHERE token=? AND kind='result' AND part=?", (token, cursor)).fetchone()
-        table, columns, rows = json.loads(zlib.decompress(bytes(row[0])))
-        if table not in TABLES:
-            raise ValueError("Invalid import table")
+        parts = conn.execute("SELECT part,data FROM import_parts WHERE token=? AND kind='result' AND part>=? "
+                             "ORDER BY part LIMIT 4", (token, cursor)).fetchall()
+        if not parts or [p["part"] for p in parts] != list(range(cursor, cursor + len(parts))):
+            raise ValueError("Missing analysis publication batch")
         # Insertion and its checkpoint commit together, so interrupted requests resume
         # without losing rows or publishing duplicates.
-        statements = [
-            (f"INSERT OR IGNORE INTO {table}({','.join(columns)}) VALUES " +
-             ",".join("(" + ",".join("?" for _ in columns) + ")" for _ in rows), [v for r in rows for v in r]),
-            ("UPDATE import_jobs SET cursor=?,updated_at=? WHERE token=?", (cursor + 1, time.time(), token)),
-        ]
+        statements = []
+        for part in parts:
+            table, columns, rows = json.loads(zlib.decompress(bytes(part["data"])))
+            if table not in TABLES:
+                raise ValueError("Invalid import table")
+            statements.append((f"INSERT OR IGNORE INTO {table}({','.join(columns)}) VALUES " +
+                               ",".join("(" + ",".join("?" for _ in columns) + ")" for _ in rows), [v for r in rows for v in r]))
+        next_cursor = cursor + len(parts)
+        statements.append(("UPDATE import_jobs SET cursor=?,updated_at=? WHERE token=?", (next_cursor, time.time(), token)))
         if isinstance(conn, db.RemoteConnection):
             conn.atomic_batch(statements)
         else:
@@ -322,7 +326,7 @@ def _publish(job, conn):
                 conn.execute("BEGIN IMMEDIATE")
                 for sql, args in statements:
                     conn.execute(sql, args)
-        cursor += 1
+        cursor = next_cursor
     conn.execute("UPDATE datasets SET progress=?,stage=? WHERE id=?",
                  (0.5 + 0.49 * cursor / max(job["batch_count"], 1),
                   f"Saving analysis · {cursor} of {job['batch_count']} batches", ds_id))

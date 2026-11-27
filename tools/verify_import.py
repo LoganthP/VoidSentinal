@@ -41,7 +41,15 @@ def main():
         password = os.environ["VS_ADMIN_PASSWORD"]
 
     def call(method, path, **kw):
-        r = client.request(method, "/api" + path, headers={"X-VS-Request": "1"}, **kw)
+        for attempt in range(4):
+            try:
+                r = client.request(method, "/api" + path, headers={"X-VS-Request": "1"}, **kw)
+                break
+            except Exception as exc:
+                if not (args.url and isinstance(exc, httpx.TransportError) and
+                        (method in ("GET", "PUT") or path.endswith("/process")) and attempt < 3):
+                    raise
+                time.sleep(attempt + 1)
         if not r.is_success:
             raise RuntimeError(f"{method} {path}: {r.status_code} {r.text[:500]}")
         return r.json()
