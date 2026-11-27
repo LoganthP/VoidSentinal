@@ -401,7 +401,14 @@ export default function ImportDataset() {
                         sessionStorage.setItem("vs-import-dataset", String(d.id)); setDsId(d.id); setPhase("analyzing");
                       }}>Resume analysis</button>}
                     </div>}
-                    {d.status === "failed" && <div className="mt-1 flex items-start gap-1 text-xs text-sev-critical"><XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{d.error}</div>}
+                    {d.status === "failed" && <div className="mt-1 text-xs text-sev-critical"><XCircle className="mr-1 inline h-3.5 w-3.5" />{d.error}
+                      {isAdmin && <button className="mt-2 block font-semibold text-signal" onClick={async () => {
+                        try {
+                          await api(`/datasets/${d.id}/retry`, { method: "POST" });
+                          sessionStorage.setItem("vs-import-dataset", String(d.id)); setDsId(d.id); setPhase("analyzing"); setErr(null);
+                        } catch (e) { setErr((e as Error).message); }
+                      }}>Retry analysis</button>}
+                    </div>}
                   </li>
                 ))}
               </ul>

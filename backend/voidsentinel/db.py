@@ -275,6 +275,17 @@ def get_conn() -> sqlite3.Connection | RemoteConnection:
     return conn
 
 
+def discard_connection():
+    """A failed remote stream must not be reused by another request."""
+    conn = getattr(_local, "conn", None)
+    _local.conn = None
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _columns(conn, table: str) -> set[str]:
     return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
 
@@ -373,7 +384,12 @@ def tx():
         yield conn
         conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            # Preserve the original error if the remote transaction has expired.
+            if isinstance(conn, RemoteConnection):
+                discard_connection()
         raise
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 import time
@@ -28,6 +29,7 @@ CHUNK_BYTES = 2 * 1024 * 1024
 LEASE_SECONDS = 360
 TABLES = ("events", "sessions", "alerts", "alert_sessions", "models")
 router = APIRouter(prefix="/api/datasets", dependencies=[Depends(auth.require_admin)])
+log = logging.getLogger("vs.serverless_import")
 
 
 def init_schema(conn, commit=True):
@@ -309,14 +311,16 @@ def _publish(job, conn):
         # Insertion and its checkpoint commit together, so interrupted requests resume
         # without losing rows or publishing duplicates.
         with db.tx():
-            conn.execute(f"INSERT INTO {table}({','.join(columns)}) VALUES " +
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(f"INSERT OR IGNORE INTO {table}({','.join(columns)}) VALUES " +
                          ",".join("(" + ",".join("?" for _ in columns) + ")" for _ in rows),
                          [v for r in rows for v in r])
             cursor += 1
             conn.execute("UPDATE import_jobs SET cursor=?,updated_at=? WHERE token=?", (cursor, time.time(), token))
-            conn.execute("UPDATE datasets SET progress=?,stage=? WHERE id=?",
-                         (0.5 + 0.49 * cursor / max(job["batch_count"], 1),
-                          f"Saving analysis · {cursor} of {job['batch_count']} batches", ds_id))
+    conn.execute("UPDATE datasets SET progress=?,stage=? WHERE id=?",
+                 (0.5 + 0.49 * cursor / max(job["batch_count"], 1),
+                  f"Saving analysis · {cursor} of {job['batch_count']} batches", ds_id))
+    conn.commit()
     if cursor == job["batch_count"]:
         result = json.loads(job["result"])
         cols = ("status", "stage", "progress", "sessions", "alerts", "events", "duplicate_rows", "first_ts", "last_ts", "stats", "error")
@@ -347,9 +351,16 @@ def process(token: str):
         if handler:
             handler(job, conn)
     except Exception as exc:
-        conn.rollback()
+        log.exception("import phase %s failed for dataset %s", job["state"], job["dataset_id"])
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if isinstance(conn, db.RemoteConnection):
+            db.discard_connection()
+            conn = db.get_conn()
         # Infrastructure failures are retryable; validation failures are actionable.
-        if isinstance(exc, (ValueError, OSError, zipfile.BadZipFile, EOFError)):
+        if job["state"] == "validating" and isinstance(exc, (ValueError, OSError, zipfile.BadZipFile, EOFError)):
             conn.execute("UPDATE import_jobs SET state='failed',error=? WHERE token=?", (str(exc)[:500], token))
             if job["dataset_id"]:
                 conn.execute("UPDATE datasets SET status='failed',error=? WHERE id=?", (str(exc)[:500], job["dataset_id"]))
@@ -374,3 +385,18 @@ def process_dataset(dataset_id: int):
     if token:
         return process(token)
     return {"state": "legacy"}
+
+
+@router.post("/{dataset_id}/retry")
+def retry_dataset(dataset_id: int):
+    token = token_for_dataset(dataset_id)
+    if not token:
+        raise HTTPException(409, "This older import cannot resume. Delete it and upload the file again.")
+    job = _job(token)
+    if job["state"] == "failed":
+        conn = db.get_conn()
+        with db.tx():
+            conn.execute("UPDATE import_jobs SET state=?,error=NULL,lease=NULL,lease_until=0 WHERE token=?",
+                         ("publishing" if job["result"] else "analyzing", token))
+            conn.execute("UPDATE datasets SET status='importing',error=NULL WHERE id=?", (dataset_id,))
+    return {"id": dataset_id}
