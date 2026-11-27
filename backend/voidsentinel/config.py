@@ -21,7 +21,9 @@ def _cidrs(raw: str) -> list:
 
 @dataclass(frozen=True)
 class Settings:
-    data_dir: str = os.environ.get("VS_DATA_DIR", "/data")
+    database_url: str = os.environ.get("TURSO_DATABASE_URL", "")
+    database_token: str = os.environ.get("TURSO_AUTH_TOKEN", "")
+    data_dir: str = os.environ.get("VS_DATA_DIR", "/tmp/voidsentinel" if os.environ.get("VERCEL") and database_url else "/data")
     source: str = os.environ.get("VS_SOURCE", "file").lower()          # file | cloudwatch
     shipped_file: str = os.environ.get("VS_SHIPPED_FILE", "/shipped/events.jsonl")
     aws_region: str = os.environ.get("AWS_REGION", "ap-south-1")
