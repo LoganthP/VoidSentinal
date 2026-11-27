@@ -5,6 +5,8 @@ import json
 import os
 import sqlite3
 import threading
+import base64
+from urllib.parse import urlsplit
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -244,6 +246,48 @@ class RemoteConnection:
 
     def close(self):
         self.connection.close()
+
+    def atomic_batch(self, statements):
+        """Commit a bulk write and checkpoint in one stateless Hrana request.
+
+        https://github.com/tursodatabase/libsql/blob/main/docs/HTTP_V2_SPEC.md
+        No transaction is held open between network roundtrips.
+        """
+        import httpx
+
+        def value(v):
+            if v is None:
+                return {"type": "null"}
+            if isinstance(v, int):
+                return {"type": "integer", "value": str(v)}
+            if isinstance(v, float):
+                return {"type": "float", "value": v}
+            if isinstance(v, bytes):
+                return {"type": "blob", "base64": base64.b64encode(v).decode()}
+            return {"type": "text", "value": str(v)}
+
+        steps = [{"stmt": {"sql": "BEGIN IMMEDIATE", "want_rows": False}}]
+        for sql, args in [*statements, ("COMMIT", ())]:
+            steps.append({"condition": {"type": "ok", "step": len(steps) - 1},
+                          "stmt": {"sql": sql, "args": [value(v) for v in args], "want_rows": False}})
+        commit_step = len(steps) - 1
+        steps.append({"condition": {"type": "and", "conds": [
+            {"type": "ok", "step": 0}, {"type": "not", "cond": {"type": "ok", "step": commit_step}}]},
+            "stmt": {"sql": "ROLLBACK", "want_rows": False}})
+        url = urlsplit(settings.database_url)
+        scheme = "https" if url.scheme == "libsql" else url.scheme
+        endpoint = f"{scheme}://{url.netloc}/v2/pipeline"
+        response = httpx.post(endpoint, headers={"Authorization": f"Bearer {settings.database_token}"},
+                              json={"requests": [{"type": "batch", "batch": {"steps": steps}}, {"type": "close"}]},
+                              timeout=30)
+        response.raise_for_status()
+        result = response.json()["results"][0]
+        if result["type"] == "error":
+            raise RuntimeError(f"Database batch failed: {result['error']['message']}")
+        batch = result["response"]["result"]
+        if not batch["step_results"][commit_step]:
+            error = next((e for e in batch["step_errors"] if e), {})
+            raise RuntimeError(f"Database batch failed: {error.get('message', 'transaction was not committed')}")
 
 
 def connect() -> sqlite3.Connection | RemoteConnection:

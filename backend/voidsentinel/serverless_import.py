@@ -310,13 +310,19 @@ def _publish(job, conn):
             raise ValueError("Invalid import table")
         # Insertion and its checkpoint commit together, so interrupted requests resume
         # without losing rows or publishing duplicates.
-        with db.tx():
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(f"INSERT OR IGNORE INTO {table}({','.join(columns)}) VALUES " +
-                         ",".join("(" + ",".join("?" for _ in columns) + ")" for _ in rows),
-                         [v for r in rows for v in r])
-            cursor += 1
-            conn.execute("UPDATE import_jobs SET cursor=?,updated_at=? WHERE token=?", (cursor, time.time(), token))
+        statements = [
+            (f"INSERT OR IGNORE INTO {table}({','.join(columns)}) VALUES " +
+             ",".join("(" + ",".join("?" for _ in columns) + ")" for _ in rows), [v for r in rows for v in r]),
+            ("UPDATE import_jobs SET cursor=?,updated_at=? WHERE token=?", (cursor + 1, time.time(), token)),
+        ]
+        if isinstance(conn, db.RemoteConnection):
+            conn.atomic_batch(statements)
+        else:
+            with db.tx():
+                conn.execute("BEGIN IMMEDIATE")
+                for sql, args in statements:
+                    conn.execute(sql, args)
+        cursor += 1
     conn.execute("UPDATE datasets SET progress=?,stage=? WHERE id=?",
                  (0.5 + 0.49 * cursor / max(job["batch_count"], 1),
                   f"Saving analysis · {cursor} of {job['batch_count']} batches", ds_id))
