@@ -64,8 +64,7 @@ def seed_users() -> None:
         # Explicit, one-time recovery via hosting environment. Changing a password
         # later in Access must never be undone by a subsequent cold start.
         key = "admin_password_reset:" + _h(settings.admin_password_reset_version)
-        with db.tx():
-            conn.execute("BEGIN IMMEDIATE")
+        with db.tx(immediate=True):
             if not db.get_checkpoint(key):
                 row = conn.execute("SELECT id FROM users WHERE username=?", (settings.admin_username,)).fetchone()
                 if row:

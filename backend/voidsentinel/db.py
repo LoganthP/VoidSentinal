@@ -223,9 +223,16 @@ class RemoteCursor:
 class RemoteConnection:
     def __init__(self, connection):
         self.connection = connection
+        self.in_transaction = False
 
     def execute(self, sql, parameters=()):
-        return RemoteCursor(self.connection.execute(sql, parameters))
+        cursor = RemoteCursor(self.connection.execute(sql, parameters))
+        command = sql.strip().split(None, 1)[0].upper()
+        if command == "BEGIN":
+            self.in_transaction = True
+        elif command in ("COMMIT", "ROLLBACK", "END"):
+            self.in_transaction = False
+        return cursor
 
     def executemany(self, sql, parameters):
         return RemoteCursor(self.connection.executemany(sql, parameters))
@@ -239,10 +246,12 @@ class RemoteConnection:
                 statement = ""
 
     def commit(self):
-        self.connection.commit()
+        if self.in_transaction:
+            self.execute("COMMIT")
 
     def rollback(self):
-        self.connection.rollback()
+        if self.in_transaction:
+            self.execute("ROLLBACK")
 
     def close(self):
         self.connection.close()
@@ -298,7 +307,10 @@ def connect() -> sqlite3.Connection | RemoteConnection:
     if settings.database_url:
         import libsql
 
-        return RemoteConnection(libsql.connect(settings.database_url, auth_token=settings.database_token))
+        # libsql's default transaction mode keeps a transaction open even while
+        # the function is idle. Turso expires that stream between requests.
+        return RemoteConnection(libsql.connect(settings.database_url, auth_token=settings.database_token,
+                                               isolation_level=None))
     os.makedirs(settings.data_dir, exist_ok=True)
     conn = sqlite3.connect(settings.db_path, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -393,7 +405,6 @@ def init() -> None:
         return
 
     with tx() as conn:
-        conn.execute("BEGIN IMMEDIATE")
         conn.execute("CREATE TABLE IF NOT EXISTS checkpoints (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
         if not conn.execute("SELECT 1 FROM checkpoints WHERE name='schema_version_1'").fetchone():
             conn.executescript(SCHEMA)
@@ -422,9 +433,11 @@ def scope_sql(scope: str | None, col: str = "dataset_id") -> tuple[str, list]:
 
 
 @contextmanager
-def tx():
+def tx(immediate=False):
     conn = get_conn()
     try:
+        if (isinstance(conn, RemoteConnection) or immediate) and not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
         yield conn
         conn.commit()
     except Exception:

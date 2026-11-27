@@ -193,9 +193,8 @@ def recheck(token, mapping):
 
 def queue_import(token, name):
     conn = db.get_conn()
-    with db.tx():
+    with db.tx(immediate=True):
         # Serialize competing starts; repeating the request returns the same dataset.
-        conn.execute("BEGIN IMMEDIATE")
         job = _job(token)
         if job["dataset_id"]:
             return {"id": job["dataset_id"], "status": "importing"}
@@ -322,8 +321,7 @@ def _publish(job, conn):
         if isinstance(conn, db.RemoteConnection):
             conn.atomic_batch(statements)
         else:
-            with db.tx():
-                conn.execute("BEGIN IMMEDIATE")
+            with db.tx(immediate=True):
                 for sql, args in statements:
                     conn.execute(sql, args)
         cursor = next_cursor
