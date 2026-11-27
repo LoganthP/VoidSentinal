@@ -40,7 +40,7 @@ import time
 import uuid
 import zipfile
 from collections import Counter
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime, timezone
 from typing import Callable, Iterator
 
@@ -344,7 +344,9 @@ def validate(path: str, display_name: str, mapping: dict | None = None, staged_p
     samples = []
     meta: dict = {}
     prog = _Progress(1)
-    out = open(staged_path, "w", encoding="utf-8") if staged_path else None
+    out = (gzip.open(staged_path, "wt", encoding="utf-8", compresslevel=1)
+           if staged_path and staged_path.endswith(".gz")
+           else open(staged_path, "w", encoding="utf-8") if staged_path else None)
     last_report = 0.0
     try:
         for source, line_no, payload in iter_records(path, display_name, mapping, meta, prog):
@@ -770,7 +772,8 @@ def _import(conn, ds_id: int, staged_path: str) -> None:
         stats.session(s)
         done_keys.add(hash(key))
 
-    with open(staged_path, "r", encoding="utf-8") as fh:
+    opener = gzip.open if staged_path.endswith(".gz") else open
+    with opener(staged_path, "rt", encoding="utf-8") as fh:
         for line in fh:
             parts = line.rstrip("\n").split("\t", 6)
             if len(parts) != 7:
@@ -826,7 +829,10 @@ def _import(conn, ds_id: int, staged_path: str) -> None:
     # cross-connection rule: one ordered pass over failed logins
     _progress(conn, ds_id, "Checking repeated login failures per source", 0.82,
               events=inserted, duplicate_rows=n - inserted, first_ts=first, last_ts=last)
-    with closing(db.connect()) as source_conn:
+    # Isolated analysis can use an in-memory database. Iterate the immutable
+    # events on that same connection while updating only sessions and alerts.
+    source = nullcontext(conn) if db._isolated.get() else closing(db.connect())
+    with source as source_conn:
         cur = source_conn.execute(
             "SELECT src_ip, event_uid, ts, sensor, session FROM events WHERE dataset_id=? "
             "AND eventid='cowrie.login.failed' AND src_ip IS NOT NULL ORDER BY src_ip, ts", (ds_id,))

@@ -34,7 +34,7 @@ with the same bytes is safe; missing or changed chunks are rejected.
 
 Each **Process** request claims a database lease and finishes its work before
 returning. Validation and analysis each use a fresh temporary directory. Analysis
-runs the existing detection and anomaly pipeline against an isolated SQLite
+runs the existing detection and anomaly pipeline against an isolated in-memory SQLite
 database, then publishes the results to Turso in short transactions. Session and
 alert IDs are reserved before publication, preserving links to evidence and
 avoiding collisions with other imports or live data. The trained model is also

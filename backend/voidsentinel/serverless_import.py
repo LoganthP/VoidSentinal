@@ -8,10 +8,8 @@ after an HTTP response and no later request depends on the same filesystem.
 from __future__ import annotations
 
 import hashlib
-import gzip
 import json
 import os
-import shutil
 import tempfile
 import time
 import uuid
@@ -230,14 +228,11 @@ def _validate(job, conn):
     token = job["token"]
     with tempfile.TemporaryDirectory(prefix="vs-validate-") as folder:
         path = str(Path(folder) / job["filename"])
-        staged = str(Path(folder) / "staged.tsv")
+        staged = str(Path(folder) / "staged.tsv.gz")
         _restore(conn, token, "raw", path)
         rep = importer.validate(path, job["filename"], json.loads(job["mapping"]) if job["mapping"] else None, staged)
         conn.execute("DELETE FROM import_parts WHERE token=? AND kind='staged'", (token,))
-        compressed = staged + ".gz"
-        with open(staged, "rb") as src, gzip.open(compressed, "wb", compresslevel=1) as dest:
-            shutil.copyfileobj(src, dest)
-        _store_file(conn, token, "staged", compressed)
+        _store_file(conn, token, "staged", staged)
         conn.execute("UPDATE import_jobs SET state='ready',report=?,error=NULL WHERE token=?",
                      (json.dumps(rep), token))
         conn.commit()
@@ -249,11 +244,11 @@ def _analyze(job, shared):
     shared.execute("UPDATE datasets SET stage='Analyzing events, detection rules and anomalies',progress=0.05 WHERE id=?", (ds_id,))
     shared.commit()
     with tempfile.TemporaryDirectory(prefix="vs-analysis-") as folder:
-        staged = str(Path(folder) / "staged.tsv")
-        _restore(shared, token, "staged", staged + ".gz")
-        with gzip.open(staged + ".gz", "rb") as src, open(staged, "wb") as dest:
-            shutil.copyfileobj(src, dest)
-        with db.isolated_database(str(Path(folder) / "analysis.db")) as local:
+        staged = str(Path(folder) / "staged.tsv.gz")
+        _restore(shared, token, "staged", staged)
+        # Vercel's temporary disk is also occupied by unpacked Python packages.
+        # Keep the working database in memory; only compressed logs touch /tmp.
+        with db.isolated_database(":memory:") as local:
             cols = list(dataset)
             local.execute(f"INSERT INTO datasets({','.join(cols)}) VALUES({','.join('?' for _ in cols)})", list(dataset.values()))
             local.commit()

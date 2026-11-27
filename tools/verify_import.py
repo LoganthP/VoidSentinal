@@ -19,6 +19,7 @@ def main():
     parser.add_argument("archive", type=Path)
     parser.add_argument("--url")
     parser.add_argument("--username", default="admin")
+    parser.add_argument("--dataset-id", type=int, help="Resume and verify an existing import instead of uploading again")
     args = parser.parse_args()
     temporary = None
     if args.url:
@@ -48,22 +49,25 @@ def main():
     started = time.monotonic()
     with client:
         call("POST", "/auth/login", json={"username": args.username, "password": password})
-        size = args.archive.stat().st_size
-        job = call("POST", "/datasets/uploads", json={"filename": args.archive.name, "size": size})
-        token = job["token"]
-        with args.archive.open("rb") as fh:
-            n = 0
-            while chunk := fh.read(job["chunk_bytes"]):
-                call("PUT", f"/datasets/uploads/{token}/chunks/{n}", content=chunk)
-                n += 1
-        print(f"Uploaded {size:,} bytes in {n} chunks", flush=True)
-        call("POST", f"/datasets/uploads/{token}/complete")
-        status = call("POST", f"/datasets/uploads/{token}/process")
-        assert status["state"] == "ready", status
-        report = status["report"]
-        print(f"Validated {report['accepted_rows']:,} accepted rows, {report['rejected_rows']:,} rejected", flush=True)
-        dataset = call("POST", "/datasets/import", json={"token": token, "name": args.archive.stem})
-        ds_id = dataset["id"]
+        if args.dataset_id:
+            ds_id = args.dataset_id
+        else:
+            size = args.archive.stat().st_size
+            job = call("POST", "/datasets/uploads", json={"filename": args.archive.name, "size": size})
+            token = job["token"]
+            with args.archive.open("rb") as fh:
+                n = 0
+                while chunk := fh.read(job["chunk_bytes"]):
+                    call("PUT", f"/datasets/uploads/{token}/chunks/{n}", content=chunk)
+                    n += 1
+            print(f"Uploaded {size:,} bytes in {n} chunks", flush=True)
+            call("POST", f"/datasets/uploads/{token}/complete")
+            status = call("POST", f"/datasets/uploads/{token}/process")
+            assert status["state"] == "ready", status
+            report = status["report"]
+            print(f"Validated {report['accepted_rows']:,} accepted rows, {report['rejected_rows']:,} rejected", flush=True)
+            dataset = call("POST", "/datasets/import", json={"token": token, "name": args.archive.stem})
+            ds_id = dataset["id"]
         while True:
             call("POST", f"/datasets/{ds_id}/process")
             dataset = call("GET", f"/datasets/{ds_id}")
