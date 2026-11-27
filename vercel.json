@@ -4,15 +4,11 @@
     "backend": {
       "root": "backend",
       "framework": "fastapi",
-      "entrypoint": "voidsentinel/api.py"
+      "entrypoint": "voidsentinel.api:app"
     },
     "frontend": {
       "root": "frontend",
       "framework": "vite"
-    },
-    "collector": {
-      "root": "sensor/collector",
-      "runtime": "python"
     }
   },
   "rewrites": [
