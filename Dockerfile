@@ -23,10 +23,38 @@ COPY --from=dashboard /build/dist ./dashboard
 # Register static files after the API routes to keep requests on one origin.
 RUN <<'EOF'
 cat > render_app.py <<'PY'
+import asyncio
+import sys
+from contextlib import asynccontextmanager
+
 from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 
 from voidsentinel.api import app
+
+
+api_lifespan = app.router.lifespan_context
+
+
+@asynccontextmanager
+async def render_lifespan(application):
+    async with api_lifespan(application):
+        worker = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "voidsentinel.worker"
+        )
+        try:
+            yield
+        finally:
+            if worker.returncode is None:
+                worker.terminate()
+                try:
+                    await asyncio.wait_for(worker.wait(), timeout=15)
+                except asyncio.TimeoutError:
+                    worker.kill()
+                    await worker.wait()
+
+
+app.router.lifespan_context = render_lifespan
 
 
 class DashboardFiles(StaticFiles):
