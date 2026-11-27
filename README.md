@@ -292,8 +292,8 @@ The first start creates two accounts from `.env`:
 
 | Role | Username | Password | Can |
 |---|---|---|---|
-| 🛡️ **Admin** | `admin` | `Admin#2026-change-me` | Everything an analyst can, plus import datasets, retrain models, manage access |
-| 🧑‍💻 **Analyst** | `analyst` | `Analyst#2026-change-me` | View telemetry, investigate alerts, record verdicts |
+| 🛡️ **Admin** | `admin` | `Iou3D6sDrH0B4msK` | Everything an analyst can, plus import datasets, retrain models, manage access |
+| 🧑‍💻 **Analyst** | `analyst` | `Ax9BtIpBbp2JUv4H` | View telemetry, investigate alerts, record verdicts |
 
 > ⚠️ Passwords are **case-sensitive**. These are placeholder lab credentials, so change them in `.env` before the first start (or later on the **Access** page) and never reuse them anywhere real. If a password is left empty, one is generated and printed once in `docker compose logs api`.
 
