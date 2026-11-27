@@ -67,9 +67,13 @@ def seed_users() -> None:
                                (settings.analyst_username, settings.analyst_password, "analyst")):
         generated = not pw
         pw = pw or secrets.token_urlsafe(12)
-        conn.execute("INSERT INTO users(username, pw_hash, role, created_at) VALUES (?,?,?,?)",
-                     (username, hash_password(pw), role, time.time()))
-        created.append((username, role, pw if generated else None))
+        row = conn.execute(
+            "INSERT INTO users(username, pw_hash, role, created_at) VALUES (?,?,?,?) "
+            "ON CONFLICT(username) DO NOTHING RETURNING id",
+            (username, hash_password(pw), role, time.time()),
+        ).fetchone()
+        if row is not None:
+            created.append((username, role, pw if generated else None))
     conn.commit()
     for username, role, generated in created:
         if generated:
