@@ -1,5 +1,4 @@
-"""SQLite storage (WAL mode). The worker is the single ingestion writer;
-the API writes only analyst verdicts."""
+"""Storage using local SQLite or a shared Turso database."""
 from __future__ import annotations
 
 import json
@@ -167,7 +166,71 @@ CREATE TABLE IF NOT EXISTS models (
 _local = threading.local()
 
 
-def connect() -> sqlite3.Connection:
+class RemoteRow(dict):
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return tuple(self.values())[key]
+        return super().__getitem__(key)
+
+
+class RemoteCursor:
+    def __init__(self, cursor):
+        self.cursor = cursor
+        self.columns = [column[0] for column in (cursor.description or ())]
+
+    @property
+    def rowcount(self):
+        return self.cursor.rowcount
+
+    @property
+    def lastrowid(self):
+        return self.cursor.lastrowid
+
+    def fetchone(self):
+        row = self.cursor.fetchone()
+        return RemoteRow(zip(self.columns, row)) if row is not None else None
+
+    def fetchall(self):
+        return list(self)
+
+    def __iter__(self):
+        while (row := self.fetchone()) is not None:
+            yield row
+
+
+class RemoteConnection:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, sql, parameters=()):
+        return RemoteCursor(self.connection.execute(sql, parameters))
+
+    def executemany(self, sql, parameters):
+        return RemoteCursor(self.connection.executemany(sql, parameters))
+
+    def executescript(self, script):
+        statement = ""
+        for line in script.splitlines(keepends=True):
+            statement += line
+            if sqlite3.complete_statement(statement):
+                self.execute(statement)
+                statement = ""
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
+
+
+def connect() -> sqlite3.Connection | RemoteConnection:
+    if settings.database_url:
+        import libsql
+
+        return RemoteConnection(libsql.connect(settings.database_url, auth_token=settings.database_token))
     os.makedirs(settings.data_dir, exist_ok=True)
     conn = sqlite3.connect(settings.db_path, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -178,7 +241,7 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
-def get_conn() -> sqlite3.Connection:
+def get_conn() -> sqlite3.Connection | RemoteConnection:
     conn = getattr(_local, "conn", None)
     if conn is None:
         conn = connect()
@@ -236,9 +299,20 @@ def _migrate(conn) -> None:
 
 def init() -> None:
     conn = get_conn()
-    conn.executescript(SCHEMA)
-    _migrate(conn)
-    conn.commit()
+    if not settings.database_url:
+        conn.executescript(SCHEMA)
+        _migrate(conn)
+        conn.commit()
+        return
+
+    with tx() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("CREATE TABLE IF NOT EXISTS checkpoints (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        if conn.execute("SELECT 1 FROM checkpoints WHERE name='schema_version_1'").fetchone():
+            return
+        conn.executescript(SCHEMA)
+        _migrate(conn)
+        set_checkpoint(conn, "schema_version_1", True)
 
 
 def scope_sql(scope: str | None, col: str = "dataset_id") -> tuple[str, list]:
