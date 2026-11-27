@@ -7,6 +7,26 @@ import pytest
 from voidsentinel import db
 
 
+def test_remote_reads_and_completed_transactions_do_not_hold_idle_transactions(monkeypatch):
+    native = sqlite3.connect(":memory:", isolation_level=None)
+    remote = db.RemoteConnection(native)
+    monkeypatch.setattr(db._local, "conn", remote, raising=False)
+    remote.execute("CREATE TABLE data(id INTEGER)")
+    with db.tx():
+        remote.execute("INSERT INTO data VALUES(1)")
+    assert not native.in_transaction and not remote.in_transaction
+    assert remote.execute("SELECT COUNT(*) FROM data").fetchone()[0] == 1
+    remote.commit()
+    assert not native.in_transaction
+    with pytest.raises(sqlite3.OperationalError):
+        with db.tx():
+            remote.execute("INSERT INTO data VALUES(2)")
+            remote.execute("INSERT INTO missing_table VALUES(3)")
+    assert remote.execute("SELECT COUNT(*) FROM data").fetchone()[0] == 1
+    assert not native.in_transaction and not remote.in_transaction
+    native.close()
+
+
 @pytest.mark.parametrize("fail", [False, True])
 def test_remote_batch_commits_data_and_checkpoint_together(monkeypatch, fail):
     server = sqlite3.connect(":memory:")

@@ -82,6 +82,7 @@ def main():
             print(f"{dataset['stage']} ({dataset['progress']:.0%})", flush=True)
             if dataset["status"] != "importing":
                 break
+            time.sleep(2)
         assert dataset["status"] == "ready", dataset
         scope = f"ds:{ds_id}"
         overview = call("GET", f"/overview?scope={scope}")
